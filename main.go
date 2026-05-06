@@ -77,34 +77,44 @@ func crit(f string, a ...any) { fmt.Printf(cRed+"[!!]"+cReset+" "+cBold+f+cReset
 // ─────────────────────────────────────────────────────────────
 
 type opts struct {
-	DC       string
-	DCIP     string
-	Domain   string
-	Username string
-	Password string
-	Hashes   string // LM:NT
-	Kerberos bool
-	Proxy    string
-	Outfile  string
-	All      bool
-	Verbose  bool
+	DC           string
+	DCIP         string
+	Domain       string
+	TargetDomain string // domain to walk in SYSVOL/LDAP (defaults to Domain)
+	Username     string
+	Password     string
+	Hashes       string // LM:NT
+	Kerberos     bool
+	Proxy        string
+	Outfile      string
+	All          bool
+	Verbose      bool
+}
+
+// sysvol returns the domain used for SYSVOL path and LDAP base DN.
+func (o *opts) sysvol() string {
+	if o.TargetDomain != "" {
+		return o.TargetDomain
+	}
+	return o.Domain
 }
 
 func parseArgs() opts {
 	var o opts
-	flag.StringVar(&o.Domain,   "d",      "",    "Domain (e.g. corp.local)")
-	flag.StringVar(&o.Username, "u",      "",    "Username")
-	flag.StringVar(&o.Password, "p",      "",    "Password")
-	flag.StringVar(&o.Hashes,   "H",      "",    "LM:NT hashes (pass-the-hash)")
-	flag.BoolVar  (&o.Kerberos, "k",      false, "Use Kerberos (KRB5CCNAME must be set)")
-	flag.StringVar(&o.DCIP,     "dc-ip",  "",    "DC IP (if DC arg is a hostname)")
-	flag.StringVar(&o.Proxy,    "proxy",  "",    "SOCKS5 proxy (e.g. socks5h://127.0.0.1:1080)")
-	flag.StringVar(&o.Outfile,  "o",      "",    "JSON output file")
-	flag.BoolVar  (&o.All,      "all",    false, "Show GPOs with no findings")
-	flag.BoolVar  (&o.Verbose,  "v",      false, "Verbose output")
+	flag.StringVar(&o.Domain,       "d",             "",    "Auth domain (e.g. corp.local)")
+	flag.StringVar(&o.TargetDomain, "target-domain", "",    "SYSVOL/LDAP domain if different from auth domain (cross-domain)")
+	flag.StringVar(&o.Username,     "u",             "",    "Username")
+	flag.StringVar(&o.Password,     "p",             "",    "Password")
+	flag.StringVar(&o.Hashes,       "H",             "",    "LM:NT hashes (pass-the-hash)")
+	flag.BoolVar  (&o.Kerberos,     "k",             false, "Use Kerberos (KRB5CCNAME must be set)")
+	flag.StringVar(&o.DCIP,         "dc-ip",         "",    "DC IP (if DC arg is a hostname)")
+	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5h://127.0.0.1:1080)")
+	flag.StringVar(&o.Outfile,      "o",             "",    "JSON output file")
+	flag.BoolVar  (&o.All,          "all",           false, "Show GPOs with no findings")
+	flag.BoolVar  (&o.Verbose,      "v",             false, "Verbose output")
 	flag.Parse()
 	if flag.NArg() < 1 || o.Domain == "" || o.Username == "" {
-		fmt.Fprintln(os.Stderr, "usage: sysvol-gpo-enum -u USER -p PASS -d DOMAIN [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-all] [-v] <DC>")
+		fmt.Fprintln(os.Stderr, "usage: sysvol-gpo-enum -u USER -p PASS -d DOMAIN [-target-domain DOMAIN] [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-all] [-v] <DC>")
 		os.Exit(1)
 	}
 	o.DC = flag.Arg(0)
@@ -198,7 +208,7 @@ type ldapConn struct {
 }
 
 func connectLDAP(o opts) (*ldapConn, error) {
-	baseDN := "DC=" + strings.Join(strings.Split(o.Domain, "."), ",DC=")
+	baseDN := "DC=" + strings.Join(strings.Split(o.sysvol(), "."), ",DC=")
 
 	target := session.Target{
 		Host: o.DC,
@@ -931,7 +941,7 @@ func main() {
 	}
 
 	// ── Enumerate SYSVOL\<domain>\Policies
-	policiesPath := fmt.Sprintf("%s\\Policies", o.Domain)
+	policiesPath := fmt.Sprintf("%s\\Policies", o.sysvol())
 	info("Enumerating SYSVOL: \\\\%s\\SYSVOL\\%s", o.DC, policiesPath)
 
 	topEntries, err := smbs.listDir(policiesPath)
