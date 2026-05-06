@@ -930,7 +930,7 @@ func main() {
 
 	// ── Enumerate SYSVOL\<domain>\Policies
 	policiesPath := fmt.Sprintf("%s\\Policies", o.Domain)
-	info("Enumerating SYSVOL: \\\\%s\\SYSVOL%s", o.DC, policiesPath)
+	info("Enumerating SYSVOL: \\\\%s\\SYSVOL\\%s", o.DC, policiesPath)
 
 	topEntries, err := smbs.listDir(policiesPath)
 	if err != nil {
