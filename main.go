@@ -29,8 +29,10 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -123,7 +125,7 @@ func parseArgs() opts {
 	flag.BoolVar  (&o.Kerberos,     "k",             false, "Use Kerberos (KRB5CCNAME must be set)")
 	flag.StringVar(&o.DCIP,         "dc-ip",         "",    "DC IP (if DC arg is a hostname)")
 	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5h://127.0.0.1:1080)")
-	flag.StringVar(&o.Outfile,      "o",             "",    "JSON output file")
+	flag.StringVar(&o.Outfile,      "o",             "",    "Output directory (default: sysvol_YYYYMMDD_HHMMSS)")
 	flag.StringVar(&o.Policy,       "policy",        "",    "Enumerate only this GPO (GUID or display name, case-insensitive)")
 	flag.BoolVar  (&o.All,          "all",           false, "Show GPOs with no findings")
 	flag.BoolVar  (&o.Verbose,      "v",             false, "Verbose output")
@@ -916,8 +918,40 @@ func truncate(s string, n int) string {
 // ─────────────────────────────────────────────────────────────
 
 func main() {
+	stamp := time.Now().Format("20060102_150405")
 	fmt.Print(banner)
 	o := parseArgs()
+
+	// ── Output directory setup
+	outDir := o.Outfile
+	if outDir == "" {
+		outDir = "sysvol_" + stamp
+	}
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, cRed+"[-]"+cReset+" Cannot create output dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Tee stdout → report.txt (captures full console output including progress)
+	reportPath := filepath.Join(outDir, "report.txt")
+	logFile, logErr := os.Create(reportPath)
+	if logErr == nil {
+		pipeR, pipeW, pipeErr := os.Pipe()
+		if pipeErr == nil {
+			origStdout := os.Stdout
+			os.Stdout = pipeW
+			teeDone := make(chan struct{})
+			go func() {
+				io.Copy(io.MultiWriter(origStdout, logFile), pipeR)
+				close(teeDone)
+			}()
+			defer func() {
+				pipeW.Close()
+				<-teeDone
+				logFile.Close()
+			}()
+		}
+	}
 
 	// ── SMB connection
 	info("Connecting to %s over SMB...", o.DC)
@@ -935,9 +969,7 @@ func main() {
 	fmt.Printf("  %sTarget%s  : %s\n", cBold+cLime, cReset, o.DC)
 	fmt.Printf("  %sDomain%s  : %s\n", cBold+cLime, cReset, o.sysvol())
 	fmt.Printf("  %sUser%s    : %s\\%s\n", cBold+cLime, cReset, o.Domain, o.Username)
-	if o.Outfile != "" {
-		fmt.Printf("  %sOutput%s  : %s\n", cBold+cLime, cReset, o.Outfile)
-	}
+	fmt.Printf("  %sOutput%s  : %s\n", cBold+cLime, cReset, outDir)
 	fmt.Printf("  %sStarted%s : %s\n", cBold+cLime, cReset, ts)
 	fmt.Println()
 
@@ -1019,20 +1051,79 @@ func main() {
 		jitter()
 	}
 
-	// ── Print report
+	// ── Print report (also captured to report.txt via tee)
 	printReport(results, o.All)
 
-	// ── Optional JSON dump
-	if o.Outfile != "" {
-		f, err := os.Create(o.Outfile)
-		if err != nil {
-			warn("Could not create output file: %v", err)
-		} else {
-			enc := json.NewEncoder(f)
-			enc.SetIndent("", "  ")
-			_ = enc.Encode(results)
-			f.Close()
-			good("JSON report written to %s", o.Outfile)
+	// ── Save report.json
+	jsonPath := filepath.Join(outDir, "report.json")
+	if jf, err := os.Create(jsonPath); err == nil {
+		enc := json.NewEncoder(jf)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(results)
+		jf.Close()
+	}
+
+	// ── Save summary.txt (findings only, no progress noise)
+	summaryPath := filepath.Join(outDir, "summary.txt")
+	writeSummary(summaryPath, results, o.DC, o.sysvol(), o.Username, ts)
+
+	good("Output saved → %s/", outDir)
+}
+
+func writeSummary(path string, results []GPOResult, target, domain, user, ts string) {
+	f, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	total := 0
+	for _, r := range results {
+		total += len(r.Findings)
+	}
+
+	fmt.Fprintf(f, "SYSVOL GPO Enumeration Summary\n")
+	fmt.Fprintf(f, "================================\n")
+	fmt.Fprintf(f, "Target  : %s\n", target)
+	fmt.Fprintf(f, "Domain  : %s\n", domain)
+	fmt.Fprintf(f, "User    : %s\n", user)
+	fmt.Fprintf(f, "Started : %s\n", ts)
+	fmt.Fprintf(f, "GPOs    : %d  |  Findings: %d\n\n", len(results), total)
+
+	sevOrder := []string{"CRITICAL", "HIGH", "MEDIUM", "INFO"}
+	for _, sev := range sevOrder {
+		var matches []struct {
+			GPO string
+			Finding
+		}
+		for _, r := range results {
+			for _, fi := range r.Findings {
+				if fi.Severity == sev {
+					matches = append(matches, struct {
+						GPO string
+						Finding
+					}{r.DisplayName, fi})
+				}
+			}
+		}
+		if len(matches) == 0 {
+			continue
+		}
+		fmt.Fprintf(f, "[%s] (%d)\n", sev, len(matches))
+		fmt.Fprintf(f, "%s\n", strings.Repeat("-", 60))
+		for _, m := range matches {
+			fmt.Fprintf(f, "  GPO      : %s\n", m.GPO)
+			fmt.Fprintf(f, "  Finding  : %s\n", m.Description)
+			if m.FileLabel != "" {
+				fmt.Fprintf(f, "  File     : %s\n", m.File)
+			}
+			if m.Detail != "" {
+				fmt.Fprintf(f, "  Detail   : %s\n", m.Detail)
+			}
+			if m.Decrypted != "" {
+				fmt.Fprintf(f, "  Cleartext: %s\n", m.Decrypted)
+			}
+			fmt.Fprintln(f)
 		}
 	}
 }
