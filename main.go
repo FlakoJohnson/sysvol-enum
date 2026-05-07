@@ -48,11 +48,14 @@ import (
 const (
 	cReset  = "\033[0m"
 	cBold   = "\033[1m"
-	cDim    = "\033[2m"
+	cGrey   = "\033[90m"
+	cWhite  = "\033[97m"
+	cCyan   = "\033[36m"
+	cGreen  = "\033[32m"
 	cLime   = "\033[38;5;118m"
 	cPurple = "\033[38;5;135m"
-	cRed    = "\033[91m"
-	cYel    = "\033[93m"
+	cRed    = "\033[31m"
+	cYel    = "\033[33m"
 )
 
 const banner = cLime + cBold + `
@@ -70,6 +73,17 @@ func info(f string, a ...any) { fmt.Printf(cLime+"[*]"+cReset+" "+f+"\n", a...) 
 func good(f string, a ...any) { fmt.Printf(cLime+"[+]"+cReset+" "+f+"\n", a...) }
 func warn(f string, a ...any) { fmt.Printf(cYel+"[!]"+cReset+" "+f+"\n", a...) }
 func crit(f string, a ...any) { fmt.Printf(cRed+"[!!]"+cReset+" "+cBold+f+cReset+"\n", a...) }
+
+func header(title string) {
+	line := strings.Repeat("─", 60)
+	fmt.Printf("%s%s%s\n", cBold+cWhite, line, cReset)
+	fmt.Printf("  %s%s%s\n", cBold+cWhite, title, cReset)
+	fmt.Printf("%s%s%s\n\n", cBold+cWhite, line, cReset)
+}
+
+func section(title string) {
+	fmt.Printf("%s[ %s ]%s\n", cBold, title, cReset)
+}
 
 // ─────────────────────────────────────────────────────────────
 // CLI options
@@ -809,7 +823,7 @@ var sevColour = map[string]string{
 	"CRITICAL": cRed,
 	"HIGH":     cYel,
 	"MEDIUM":   cLime,
-	"INFO":     cDim,
+	"INFO":     cGrey,
 }
 
 func printReport(results []GPOResult, showAll bool) {
@@ -817,9 +831,9 @@ func printReport(results []GPOResult, showAll bool) {
 	for _, r := range results {
 		total += len(r.Findings)
 	}
-	fmt.Printf("\n%s%s%s\n", cBold, strings.Repeat("─", 70), cReset)
-	fmt.Printf("%s  GPO Enumeration Results — %d GPOs | %d findings%s\n", cBold, len(results), total, cReset)
-	fmt.Printf("%s%s%s\n", cBold, strings.Repeat("─", 70), cReset)
+
+	fmt.Println()
+	header(fmt.Sprintf("GPO Enumeration Results — %d GPOs  |  %d findings", len(results), total))
 
 	for _, r := range results {
 		if len(r.Findings) == 0 && !showAll {
@@ -828,29 +842,35 @@ func printReport(results []GPOResult, showAll bool) {
 		flagStr := ""
 		switch r.Flags {
 		case "1":
-			flagStr = cYel + " [USER disabled]" + cReset
+			flagStr = cYel + "  [USER disabled]" + cReset
 		case "2":
-			flagStr = cYel + " [COMPUTER disabled]" + cReset
+			flagStr = cYel + "  [COMPUTER disabled]" + cReset
 		case "3":
-			flagStr = cRed + " [ALL disabled]" + cReset
+			flagStr = cRed + "  [ALL disabled]" + cReset
 		}
-		fmt.Printf("\n%s%s%s%s%s\n", cBold, cLime, r.DisplayName, cReset, flagStr)
-		fmt.Printf("  %sGUID   : {%s}%s\n", cDim, strings.ToUpper(r.GUID), cReset)
-		fmt.Printf("  %sVersion: %s  |  Files: %d%s\n", cDim, r.Version, len(r.Files), cReset)
+		fmt.Printf("  %s%s%s%s%s\n", cBold+cLime, r.DisplayName, cReset, flagStr, "")
+		fmt.Printf("  %s%-10s%s {%s}\n", cGrey, "GUID", cReset, strings.ToUpper(r.GUID))
+		fmt.Printf("  %s%-10s%s %s  |  files: %d\n", cGrey, "Version", cReset, r.Version, len(r.Files))
 		for _, link := range r.Links {
-			fmt.Printf("  %sLinked : %s%s\n", cDim, link, cReset)
+			fmt.Printf("  %s%-10s%s %s\n", cGrey, "Linked", cReset, link)
 		}
+
 		if len(r.Findings) > 0 {
-			fmt.Printf("  %sFindings:%s\n", cBold, cReset)
 			for _, f := range r.Findings {
 				sc := sevColour[f.Severity]
-				fmt.Printf("    %s[%s]%s %s\n", sc, f.Severity, cReset, f.Description)
-				fmt.Printf("      %s%s%s\n", cDim, f.Detail, cReset)
+				fmt.Printf("\n    %s%s[%s]%s  %s\n", cBold, sc, f.Severity, cReset, f.Description)
+				if f.FileLabel != "" {
+					fmt.Printf("    %s│%s %sfile:%s %s\n", cGrey, cReset, cGrey, cReset, f.File)
+				}
+				if f.Detail != "" {
+					fmt.Printf("    %s│%s %s%s%s\n", cGrey, cReset, cGrey, f.Detail, cReset)
+				}
 				if f.Decrypted != "" {
-					fmt.Printf("      %s%s→ Decrypted: %s%s\n", cRed, cBold, f.Decrypted, cReset)
+					fmt.Printf("    %s│%s %s%sCleartext:%s %s%s\n", cGrey, cReset, cBold, cRed, cReset, f.Decrypted, cReset)
 				}
 			}
 		}
+		fmt.Println()
 	}
 
 	// Summary
@@ -861,15 +881,16 @@ func printReport(results []GPOResult, showAll bool) {
 		}
 	}
 	if len(sevCounts) > 0 {
-		fmt.Printf("\n%s%s%s\n%s  Finding Summary%s\n", cBold, strings.Repeat("─", 70), cReset, cBold, cReset)
+		section("Finding Summary")
+		fmt.Println()
 		for _, sev := range []string{"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"} {
 			if n, ok := sevCounts[sev]; ok {
 				sc := sevColour[sev]
-				fmt.Printf("  %s%-10s%s %d\n", sc, sev, cReset, n)
+				fmt.Printf("  %s%s%-10s%s %d\n", cBold, sc, sev, cReset, n)
 			}
 		}
 	}
-	fmt.Printf("\n%s%s%s\n\n", cBold, strings.Repeat("─", 70), cReset)
+	fmt.Printf("\n%s%s%s\n\n", cBold+cWhite, strings.Repeat("─", 60), cReset)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -907,6 +928,18 @@ func main() {
 	}
 	defer smbs.close()
 	good("SMB authenticated as %s\\%s", o.Domain, o.Username)
+
+	// ── Engagement context
+	ts := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+	fmt.Println()
+	fmt.Printf("  %sTarget%s  : %s\n", cBold+cLime, cReset, o.DC)
+	fmt.Printf("  %sDomain%s  : %s\n", cBold+cLime, cReset, o.sysvol())
+	fmt.Printf("  %sUser%s    : %s\\%s\n", cBold+cLime, cReset, o.Domain, o.Username)
+	if o.Outfile != "" {
+		fmt.Printf("  %sOutput%s  : %s\n", cBold+cLime, cReset, o.Outfile)
+	}
+	fmt.Printf("  %sStarted%s : %s\n", cBold+cLime, cReset, ts)
+	fmt.Println()
 
 	// ── LDAP connection for GPO name resolution
 	info("Resolving GPO names via LDAP...")
