@@ -1,20 +1,19 @@
-// sysvol-gpo-enum — SYSVOL GPO Enumerator
-// Bishop Fox Red Team Tooling | Jorge
+// sysvol-enum — SYSVOL Enumerator
 //
 // Pure Go implementation using github.com/mandiant/gopacket.
 // No Python, no impacket, no monkey-patching.
 // Compile to a single static binary, drop and run.
 //
 // Build:
-//   go build -trimpath -ldflags="-s -w" -o sysvol-gpo-enum .
+//   go build -trimpath -ldflags="-s -w" -o sysvol-enum .
 //
 // Cross-compile Windows .exe from Linux:
-//   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o sysvol-gpo-enum.exe .
+//   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o sysvol-enum.exe .
 //
 // Usage:
-//   ./sysvol-gpo-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
-//   ./sysvol-gpo-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
-//   ./sysvol-gpo-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5h://127.0.0.1:1080
+//   ./sysvol-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
+//   ./sysvol-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
+//   ./sysvol-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5h://127.0.0.1:1080
 
 package main
 
@@ -68,7 +67,7 @@ const banner = cLime + cBold + `
   ║  ╚════██║  ╚██╔╝  ╚════██║  ╚██╔╝  ██║   ██║██║                      ║
   ║  ███████║   ██║   ███████║   ██║   ╚██████╔╝███████╗                  ║
   ║  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝    ╚═════╝ ╚══════╝                  ║
-  ║` + cReset + cPurple + `  SYSVOL / GPO Enumerator  //  red team use only                    ` + cLime + cBold + `║
+  ║` + cReset + cPurple + `  SYSVOL Enumerator  //  red team use only                          ` + cLime + cBold + `║
   ╚════════════════════════════════════════════════════════════════════════╝` + cReset + "\n"
 
 func info(f string, a ...any) { fmt.Printf(cLime+"[*]"+cReset+" "+f+"\n", a...) }
@@ -131,7 +130,7 @@ func parseArgs() opts {
 	flag.BoolVar  (&o.Verbose,      "v",             false, "Verbose output")
 	flag.Parse()
 	if flag.NArg() < 1 || o.Domain == "" || o.Username == "" {
-		fmt.Fprintln(os.Stderr, "usage: sysvol-gpo-enum -u USER -p PASS -d DOMAIN [-target-domain DOMAIN] [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-policy NAME|GUID] [-all] [-v] <DC>")
+		fmt.Fprintln(os.Stderr, "usage: sysvol-enum -u USER -p PASS -d DOMAIN [-target-domain DOMAIN] [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-policy NAME|GUID] [-all] [-v] <DC>")
 		os.Exit(1)
 	}
 	o.DC = flag.Arg(0)
