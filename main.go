@@ -1,19 +1,19 @@
-// sysvol-enum — SYSVOL Enumerator
+// gpo-enum — GPO Enumerator
 //
 // Pure Go implementation using github.com/mandiant/gopacket.
 // No Python, no impacket, no monkey-patching.
 // Compile to a single static binary, drop and run.
 //
 // Build:
-//   go build -trimpath -ldflags="-s -w" -o sysvol-enum .
+//   go build -trimpath -ldflags="-s -w" -o gpo-enum .
 //
 // Cross-compile Windows .exe from Linux:
-//   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o sysvol-enum.exe .
+//   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o gpo-enum.exe .
 //
 // Usage:
-//   ./sysvol-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
-//   ./sysvol-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
-//   ./sysvol-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5h://127.0.0.1:1080
+//   ./gpo-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
+//   ./gpo-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
+//   ./gpo-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5h://127.0.0.1:1080
 
 package main
 
@@ -68,7 +68,7 @@ const banner = cLime + cBold + `
   ║  ╚════██║  ╚██╔╝  ╚════██║  ╚██╔╝  ██║   ██║██║                      ║
   ║  ███████║   ██║   ███████║   ██║   ╚██████╔╝███████╗                  ║
   ║  ╚══════╝   ╚═╝   ╚══════╝   ╚═╝    ╚═════╝ ╚══════╝                  ║
-  ║` + cReset + cPurple + `  SYSVOL Enumerator  //  red team use only                          ` + cLime + cBold + `║
+  ║` + cReset + cPurple + `  GPO Enumerator  //  red team use only                             ` + cLime + cBold + `║
   ╚════════════════════════════════════════════════════════════════════════╝` + cReset + "\n"
 
 func info(f string, a ...any) { fmt.Printf(cLime+"[*]"+cReset+" "+f+"\n", a...) }
@@ -125,13 +125,13 @@ func parseArgs() opts {
 	flag.BoolVar  (&o.Kerberos,     "k",             false, "Use Kerberos (KRB5CCNAME must be set)")
 	flag.StringVar(&o.DCIP,         "dc-ip",         "",    "DC IP (if DC arg is a hostname)")
 	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5h://127.0.0.1:1080)")
-	flag.StringVar(&o.Outfile,      "o",             "",    "Output directory (default: sysvol_YYYYMMDD_HHMMSS)")
+	flag.StringVar(&o.Outfile,      "o",             "",    "Output directory (default: gpo-enum_YYYYMMDD_HHMMSS)")
 	flag.StringVar(&o.Policy,       "policy",        "",    "Enumerate only this GPO (GUID or display name, case-insensitive)")
 	flag.BoolVar  (&o.All,          "all",           false, "Show GPOs with no findings")
 	flag.BoolVar  (&o.Verbose,      "v",             false, "Verbose output")
 	flag.Parse()
 	if flag.NArg() < 1 || o.Domain == "" || o.Username == "" {
-		fmt.Fprintln(os.Stderr, "usage: sysvol-enum -u USER -p PASS -d DOMAIN [-target-domain DOMAIN] [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-policy NAME|GUID] [-all] [-v] <DC>")
+		fmt.Fprintln(os.Stderr, "usage: gpo-enum -u USER -p PASS -d DOMAIN [-target-domain DOMAIN] [-H LM:NT] [-k] [-dc-ip IP] [-proxy URL] [-o FILE] [-policy NAME|GUID] [-all] [-v] <DC>")
 		os.Exit(1)
 	}
 	o.DC = flag.Arg(0)
@@ -1216,7 +1216,7 @@ func main() {
 	// ── Output directory setup
 	outDir := o.Outfile
 	if outDir == "" {
-		outDir = "sysvol_" + stamp
+		outDir = "gpo-enum_" + stamp
 	}
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, cRed+"[-]"+cReset+" Cannot create output dir: %v\n", err)

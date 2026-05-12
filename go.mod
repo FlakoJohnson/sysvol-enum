@@ -1,4 +1,4 @@
-module github.com/FlakoJohnson/sysvol-gpo-enum
+module github.com/FlakoJohnson/gpo-enum
 
 go 1.24.13
 
