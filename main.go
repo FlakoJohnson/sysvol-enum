@@ -344,15 +344,24 @@ type Finding struct {
 	Decrypted   string `json:"decrypted,omitempty"`
 }
 
+type ServiceEntry struct {
+	Name        string `json:"name"`
+	StartupType string `json:"startup_type,omitempty"`
+	Action      string `json:"action,omitempty"`
+	Account     string `json:"account,omitempty"`
+	ClearText   string `json:"cleartext,omitempty"`
+}
+
 type GPOResult struct {
-	GUID        string    `json:"guid"`
-	DisplayName string    `json:"display_name"`
-	Flags       string    `json:"flags"`
-	Version     string    `json:"version"`
-	Path        string    `json:"path"`
-	Links       []string  `json:"links"`
-	Files       []string  `json:"files"`
-	Findings    []Finding `json:"findings"`
+	GUID        string         `json:"guid"`
+	DisplayName string         `json:"display_name"`
+	Flags       string         `json:"flags"`
+	Version     string         `json:"version"`
+	Path        string         `json:"path"`
+	Links       []string       `json:"links"`
+	Files       []string       `json:"files"`
+	Findings    []Finding      `json:"findings"`
+	Services    []ServiceEntry `json:"services,omitempty"`
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -859,12 +868,15 @@ type ntServicesXML struct {
 	Services []ntService `xml:"NTService"`
 }
 type ntService struct {
+	Name       string         `xml:"name,attr"`
 	Properties ntServiceProps `xml:"Properties"`
 }
 type ntServiceProps struct {
-	ServiceName string `xml:"serviceName,attr"`
-	AccountName string `xml:"accountName,attr"`
-	CPassword   string `xml:"cpassword,attr"`
+	ServiceName   string `xml:"serviceName,attr"`
+	AccountName   string `xml:"accountName,attr"`
+	CPassword     string `xml:"cpassword,attr"`
+	StartupType   string `xml:"startupType,attr"`
+	ServiceAction string `xml:"serviceAction,attr"`
 }
 
 func parseServicesXML(data []byte) []Finding {
@@ -892,6 +904,32 @@ func parseServicesXML(data []byte) []Finding {
 		}
 	}
 	return findings
+}
+
+func collectServices(data []byte) []ServiceEntry {
+	var root ntServicesXML
+	if err := xml.Unmarshal(data, &root); err != nil {
+		return nil
+	}
+	var out []ServiceEntry
+	for _, svc := range root.Services {
+		p := svc.Properties
+		name := p.ServiceName
+		if name == "" {
+			name = svc.Name
+		}
+		e := ServiceEntry{
+			Name:        name,
+			StartupType: p.StartupType,
+			Action:      p.ServiceAction,
+			Account:     p.AccountName,
+		}
+		if p.CPassword != "" {
+			e.ClearText = decryptCPassword(p.CPassword)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1324,6 +1362,9 @@ func walkGPO(smbs *smbSession, gpoPath, guid string, meta gpoMeta, links []strin
 					f.FileLabel = fi.Label
 					result.Findings = append(result.Findings, f)
 				}
+				if nameLower == "services.xml" {
+					result.Services = append(result.Services, collectServices(data)...)
+				}
 				if verbose {
 					info("  [%s] %s (%d bytes)", fi.Label, full, len(data))
 				}
@@ -1411,6 +1452,21 @@ func printReport(results []GPOResult, showAll bool) {
 				}
 			}
 		}
+
+		if len(r.Services) > 0 {
+			fmt.Printf("\n    %s%sServices%s\n", cBold, cWhite, cReset)
+			for _, svc := range r.Services {
+				line := fmt.Sprintf("%-25s  %-12s  %-8s", svc.Name, svc.StartupType, svc.Action)
+				if svc.Account != "" {
+					line += "  account=" + svc.Account
+				}
+				fmt.Printf("    %s│%s %s\n", cGrey, cReset, line)
+				if svc.ClearText != "" {
+					fmt.Printf("    %s│%s   %s%scleartext=%s%s\n", cGrey, cReset, cBold, cRed, svc.ClearText, cReset)
+				}
+			}
+		}
+
 		fmt.Println()
 	}
 
