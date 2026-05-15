@@ -444,6 +444,82 @@ func parseGptTmpl(data []byte) []Finding {
 			findings = append(findings, Finding{Severity: "HIGH", Description: "Account lockout disabled", Detail: line})
 		case section == "Privilege Rights" && isInterestingPrivilege(k):
 			findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("[%s] %s", section, k), Detail: line})
+		case section == "Registry Values":
+			// Format: MACHINE\path\ValueName=regtype,data  (e.g. 4,0 = REG_DWORD 0)
+			valueName := k
+			if i := strings.LastIndexByte(k, '\\'); i >= 0 {
+				valueName = k[i+1:]
+			}
+			data := v
+			if i := strings.IndexByte(v, ','); i >= 0 {
+				data = strings.TrimSpace(v[i+1:])
+			}
+			vl := strings.ToLower(valueName)
+			kl2 := strings.ToLower(k)
+			switch {
+			// ── UAC settings ─────────────────────────────────────────
+			case vl == "enablelua" && data == "0":
+				findings = append(findings, Finding{Severity: "HIGH", Description: "UAC disabled (EnableLUA=0)", Detail: line})
+			case vl == "enablelua" && data == "1":
+				findings = append(findings, Finding{Severity: "INFO", Description: "UAC enabled (EnableLUA=1)", Detail: line})
+			case vl == "filteradministratortoken" && data == "0":
+				findings = append(findings, Finding{Severity: "HIGH", Description: "Built-in Administrator token not filtered for UAC", Detail: line})
+			case vl == "filteradministratortoken" && data == "1":
+				findings = append(findings, Finding{Severity: "INFO", Description: "Built-in Administrator runs in filtered token (FilterAdministratorToken=1)", Detail: line})
+			case vl == "consentpromptbehavioradmin":
+				switch data {
+				case "0":
+					findings = append(findings, Finding{Severity: "HIGH", Description: "UAC: admins auto-elevate with no prompt (ConsentPromptBehaviorAdmin=0)", Detail: line})
+				case "1":
+					findings = append(findings, Finding{Severity: "MEDIUM", Description: "UAC: admins prompted for creds on secure desktop (ConsentPromptBehaviorAdmin=1)", Detail: line})
+				case "2":
+					findings = append(findings, Finding{Severity: "MEDIUM", Description: "UAC: admins prompted for creds without secure desktop (ConsentPromptBehaviorAdmin=2)", Detail: line})
+				case "3":
+					findings = append(findings, Finding{Severity: "INFO", Description: "UAC: admins prompted for consent on secure desktop (ConsentPromptBehaviorAdmin=3)", Detail: line})
+				case "4":
+					findings = append(findings, Finding{Severity: "MEDIUM", Description: "UAC: admins prompted for consent without secure desktop (ConsentPromptBehaviorAdmin=4)", Detail: line})
+				case "5":
+					findings = append(findings, Finding{Severity: "INFO", Description: "UAC: admins prompted for non-Windows binaries (ConsentPromptBehaviorAdmin=5, default)", Detail: line})
+				}
+			case vl == "promptonsecuredesktop" && data == "0":
+				findings = append(findings, Finding{Severity: "MEDIUM", Description: "UAC prompt not on secure desktop — prompt can be spoofed/captured", Detail: line})
+			case vl == "enablevirtualization":
+				findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("UAC file/registry virtualisation: %s", map[string]string{"0": "disabled", "1": "enabled"}[data]), Detail: line})
+			case vl == "enableinstallerdetection":
+				findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("Installer detection (UAC heuristic): %s", map[string]string{"0": "disabled", "1": "enabled"}[data]), Detail: line})
+			case vl == "enablesecureuiapaths":
+				if data == "0" {
+					findings = append(findings, Finding{Severity: "MEDIUM", Description: "Secure UI paths disabled (EnableSecureUiaPaths=0) — UIA automation runs elevated without isolation", Detail: line})
+				} else {
+					findings = append(findings, Finding{Severity: "INFO", Description: "Secure UI paths enabled (EnableSecureUiaPaths=1)", Detail: line})
+				}
+			case vl == "validateadmincodesignatures":
+				findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("Admin code signature validation: %s", map[string]string{"0": "disabled", "1": "enabled"}[data]), Detail: line})
+			case vl == "enableuiadesktoptoggle":
+				findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("UIAccess apps elevation without secure desktop: %s", map[string]string{"0": "disabled", "1": "enabled"}[data]), Detail: line})
+			// ── Token / lateral movement ──────────────────────────────
+			case vl == "localaccounttokenfilterpolicy" && data == "1":
+				findings = append(findings, Finding{Severity: "HIGH", Description: "LocalAccountTokenFilterPolicy=1 — remote admin token not stripped (PtH pivot)", Detail: line})
+			// ── NTLM / credential hygiene ─────────────────────────────
+			case vl == "lmcompatibilitylevel":
+				if n := atoi(data); n < 3 {
+					findings = append(findings, Finding{Severity: "HIGH", Description: fmt.Sprintf("NTLMv1 allowed (LmCompatibilityLevel=%s, needs ≥3 for NTLMv2 only)", data), Detail: line})
+				} else {
+					findings = append(findings, Finding{Severity: "INFO", Description: fmt.Sprintf("NTLM compatibility level: %s", data), Detail: line})
+				}
+			case strings.Contains(kl2, "wdigest") && vl == "uselogoncredential" && data == "1":
+				findings = append(findings, Finding{Severity: "CRITICAL", Description: "WDigest cleartext creds enabled (UseLogonCredential=1)", Detail: line})
+			case vl == "nolmhash" && data == "0":
+				findings = append(findings, Finding{Severity: "HIGH", Description: "LM hash storage enabled (NoLMHash=0)", Detail: line})
+			// ── SMB signing ───────────────────────────────────────────
+			case vl == "requiresecuritysignature" && data == "0" && strings.Contains(kl2, "lanmanserver"):
+				findings = append(findings, Finding{Severity: "HIGH", Description: "SMB signing not required (server-side) — relay attacks viable", Detail: line})
+			case vl == "requiresecuritysignature" && data == "0" && strings.Contains(kl2, "lanmanworkstation"):
+				findings = append(findings, Finding{Severity: "HIGH", Description: "SMB signing not required (client-side) — relay attacks viable", Detail: line})
+			// ── Privesc ───────────────────────────────────────────────
+			case vl == "alwaysinstallelevated" && data == "1":
+				findings = append(findings, Finding{Severity: "CRITICAL", Description: "AlwaysInstallElevated=1 — MSI local privesc", Detail: line})
+			}
 		}
 	}
 	return findings
