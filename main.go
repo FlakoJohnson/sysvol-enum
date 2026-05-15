@@ -1266,7 +1266,8 @@ var scriptExts = map[string]bool{
 
 // collectFile saves raw SYSVOL file bytes to outDir/sysvol/<smbPath>.
 func collectFile(outDir, smbPath string, data []byte) {
-	local := filepath.Join(outDir, "sysvol", filepath.FromSlash(strings.ReplaceAll(smbPath, "\\", "/")))
+	clean := strings.ReplaceAll(strings.ReplaceAll(smbPath, "\\", "/"), " ", "_")
+	local := filepath.Join(outDir, "sysvol", filepath.FromSlash(clean))
 	if err := os.MkdirAll(filepath.Dir(local), 0755); err != nil {
 		return
 	}
