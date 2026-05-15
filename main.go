@@ -1506,11 +1506,18 @@ func main() {
 	// ── Engagement context
 	ts := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
 	fmt.Println()
-	fmt.Printf("  %sTarget%s  : %s\n", cBold+cLime, cReset, o.DC)
-	fmt.Printf("  %sDomain%s  : %s\n", cBold+cLime, cReset, o.sysvol())
-	fmt.Printf("  %sUser%s    : %s\\%s\n", cBold+cLime, cReset, o.Domain, o.Username)
-	fmt.Printf("  %sOutput%s  : %s\n", cBold+cLime, cReset, outDir)
-	fmt.Printf("  %sStarted%s : %s\n", cBold+cLime, cReset, ts)
+	authMethod := "password"
+	if o.Kerberos {
+		authMethod = "kerberos"
+	} else if o.Hashes != "" {
+		authMethod = "hash (NTLM)"
+	}
+	fmt.Printf("  %s%sTarget%s  : %s\n", cBold, cWhite, cReset, o.DC)
+	fmt.Printf("  %s%sDomain%s  : %s\n", cBold, cWhite, cReset, o.sysvol())
+	fmt.Printf("  %s%sUser%s    : %s\\%s\n", cBold, cWhite, cReset, o.Domain, o.Username)
+	fmt.Printf("  %s%sAuth%s    : %s\n", cBold, cWhite, cReset, authMethod)
+	fmt.Printf("  %s%sOutput%s  : %s\n", cBold, cWhite, cReset, outDir)
+	fmt.Printf("  %s%sStarted%s : %s\n", cBold, cWhite, cReset, ts)
 	fmt.Println()
 
 	// ── LDAP connection for GPO name resolution
