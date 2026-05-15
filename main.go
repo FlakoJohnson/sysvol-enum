@@ -516,7 +516,8 @@ func parseRegistryPol(data []byte) []Finding {
 func lapsFindings(vals map[string]string) []Finding {
 	var findings []Finding
 
-	enabled := vals["admPwdEnabled"] != "0"
+	// keys in vals are already lowercased
+	enabled := vals["admpwdenabled"] != "0"
 	if !enabled {
 		findings = append(findings, Finding{
 			Severity:    "INFO",
@@ -757,6 +758,151 @@ func parseScheduledTasksXML(data []byte) []Finding {
 					break
 				}
 			}
+		}
+	}
+	return findings
+}
+
+// ─────────────────────────────────────────────────────────────
+// Services.xml parser — GPP service account cpassword
+// ─────────────────────────────────────────────────────────────
+
+type ntServicesXML struct {
+	XMLName  xml.Name    `xml:"NTServices"`
+	Services []ntService `xml:"NTService"`
+}
+type ntService struct {
+	Properties ntServiceProps `xml:"Properties"`
+}
+type ntServiceProps struct {
+	ServiceName string `xml:"serviceName,attr"`
+	AccountName string `xml:"accountName,attr"`
+	CPassword   string `xml:"cpassword,attr"`
+}
+
+func parseServicesXML(data []byte) []Finding {
+	var findings []Finding
+	var root ntServicesXML
+	if err := xml.Unmarshal(data, &root); err != nil {
+		return findings
+	}
+	for _, svc := range root.Services {
+		p := svc.Properties
+		if p.CPassword != "" {
+			findings = append(findings, Finding{
+				Severity:    "CRITICAL",
+				Description: "cpassword in Services.xml (service account)",
+				Detail:      fmt.Sprintf("service=%s account=%s cpassword=%s", p.ServiceName, p.AccountName, p.CPassword),
+				Decrypted:   decryptCPassword(p.CPassword),
+			})
+		} else if p.AccountName != "" && p.AccountName != "LocalSystem" &&
+			p.AccountName != "LocalService" && p.AccountName != "NetworkService" {
+			findings = append(findings, Finding{
+				Severity:    "INFO",
+				Description: "GPP service running as domain account",
+				Detail:      fmt.Sprintf("service=%s account=%s", p.ServiceName, p.AccountName),
+			})
+		}
+	}
+	return findings
+}
+
+// ─────────────────────────────────────────────────────────────
+// Printers.xml parser — GPP printer cpassword
+// ─────────────────────────────────────────────────────────────
+
+type printersXML struct {
+	XMLName        xml.Name       `xml:"Printers"`
+	SharedPrinters []sharedPrinter `xml:"SharedPrinter"`
+	PortPrinters   []portPrinter   `xml:"PortPrinter"`
+}
+type sharedPrinter struct {
+	Properties sharedPrinterProps `xml:"Properties"`
+}
+type sharedPrinterProps struct {
+	Path      string `xml:"path,attr"`
+	UserName  string `xml:"userName,attr"`
+	CPassword string `xml:"cpassword,attr"`
+}
+type portPrinter struct {
+	Properties portPrinterProps `xml:"Properties"`
+}
+type portPrinterProps struct {
+	IPAddress string `xml:"ipAddress,attr"`
+	UserName  string `xml:"userName,attr"`
+	CPassword string `xml:"cpassword,attr"`
+}
+
+func parsePrintersXML(data []byte) []Finding {
+	var findings []Finding
+	var root printersXML
+	if err := xml.Unmarshal(data, &root); err != nil {
+		return findings
+	}
+	for _, p := range root.SharedPrinters {
+		pp := p.Properties
+		if pp.CPassword != "" {
+			findings = append(findings, Finding{
+				Severity:    "CRITICAL",
+				Description: "cpassword in Printers.xml (shared printer)",
+				Detail:      fmt.Sprintf("path=%s user=%s cpassword=%s", pp.Path, pp.UserName, pp.CPassword),
+				Decrypted:   decryptCPassword(pp.CPassword),
+			})
+		}
+	}
+	for _, p := range root.PortPrinters {
+		pp := p.Properties
+		if pp.CPassword != "" {
+			findings = append(findings, Finding{
+				Severity:    "CRITICAL",
+				Description: "cpassword in Printers.xml (port printer)",
+				Detail:      fmt.Sprintf("ip=%s user=%s cpassword=%s", pp.IPAddress, pp.UserName, pp.CPassword),
+				Decrypted:   decryptCPassword(pp.CPassword),
+			})
+		}
+	}
+	return findings
+}
+
+// ─────────────────────────────────────────────────────────────
+// DataSources.xml parser — GPP ODBC data source cpassword
+// ─────────────────────────────────────────────────────────────
+
+type dataSourcesXML struct {
+	XMLName     xml.Name     `xml:"DataSources"`
+	DataSources []dataSource `xml:"DataSource"`
+}
+type dataSource struct {
+	Properties dataSourceProps `xml:"Properties"`
+}
+type dataSourceProps struct {
+	DSN       string `xml:"dsn,attr"`
+	UserName  string `xml:"userName,attr"`
+	CPassword string `xml:"cpassword,attr"`
+	Driver    string `xml:"driver,attr"`
+}
+
+func parseDataSourcesXML(data []byte) []Finding {
+	var findings []Finding
+	var root dataSourcesXML
+	if err := xml.Unmarshal(data, &root); err != nil {
+		return findings
+	}
+	for _, ds := range root.DataSources {
+		p := ds.Properties
+		if p.CPassword != "" {
+			findings = append(findings, Finding{
+				Severity:    "CRITICAL",
+				Description: "cpassword in DataSources.xml (ODBC data source)",
+				Detail:      fmt.Sprintf("dsn=%s driver=%s user=%s cpassword=%s", p.DSN, p.Driver, p.UserName, p.CPassword),
+				Decrypted:   decryptCPassword(p.CPassword),
+			})
+		} else if p.UserName != "" {
+			findings = append(findings, Finding{
+				Severity:    "INFO",
+				Description: "GPP ODBC data source with username (no cpassword)",
+				Detail:      fmt.Sprintf("dsn=%s driver=%s user=%s", p.DSN, p.Driver, p.UserName),
+			})
 		}
 	}
 	return findings
@@ -1019,6 +1165,9 @@ var interestingFiles = map[string]struct {
 	"groups.xml":         {"Groups / Local Admins (MS14-025)", parseGroupsXML},
 	"drives.xml":         {"Mapped Drives",                    parseDrivesXML},
 	"scheduledtasks.xml": {"Scheduled Tasks",                  parseScheduledTasksXML},
+	"services.xml":       {"Services (GPP)",                   parseServicesXML},
+	"printers.xml":       {"Printers (GPP)",                   parsePrintersXML},
+	"datasources.xml":    {"Data Sources (GPP)",               parseDataSourcesXML},
 	"registry.xml":       {"Registry Preferences (GPP)",       parseRegistryXML},
 	"registry.pol":       {"Registry Policy",                  parseRegistryPol},
 	"gpttmpl.inf":        {"Security Template",                parseGptTmpl},
