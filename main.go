@@ -12,7 +12,7 @@
 //
 // Usage:
 //   ./gpo-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
-//   ./gpo-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
+//   ./gpo-enum -u jsmith -H :fc525c9dc4a... -d corp.local dc01 -o out.json
 //   ./gpo-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5://127.0.0.1:1080
 
 package main
@@ -122,7 +122,7 @@ func parseArgs() opts {
 	flag.StringVar(&o.TargetDomain, "target-domain", "",    "SYSVOL/LDAP domain if different from auth domain (cross-domain)")
 	flag.StringVar(&o.Username,     "u",             "",    "Username")
 	flag.StringVar(&o.Password,     "p",             "",    "Password")
-	flag.StringVar(&o.Hashes,       "H",             "",    "LM:NT hashes (pass-the-hash)")
+	flag.StringVar(&o.Hashes,       "H",             "",    "NT hash — :hash, hash, or LM:NT")
 	flag.BoolVar  (&o.Kerberos,     "k",             false, "Use Kerberos (KRB5CCNAME must be set)")
 	flag.StringVar(&o.DCIP,         "dc-ip",         "",    "DC IP (if DC arg is a hostname)")
 	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5://127.0.0.1:1080) — hostname always resolved via proxy")
@@ -138,6 +138,11 @@ func parseArgs() opts {
 	o.DC = flag.Arg(0)
 	if o.DCIP == "" {
 		o.DCIP = o.DC
+	}
+	// Accept :NTHASH or bare NTHASH — pad with empty LM hash.
+	if o.Hashes != "" && !strings.Contains(o.Hashes[1:], ":") {
+		nt := strings.TrimPrefix(o.Hashes, ":")
+		o.Hashes = "aad3b435b51404eeaad3b435b51404ee:" + nt
 	}
 	return o
 }
