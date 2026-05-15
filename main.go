@@ -13,7 +13,7 @@
 // Usage:
 //   ./gpo-enum -u jsmith -p 'Password1' -d corp.local dc01.corp.local
 //   ./gpo-enum -u jsmith -H aad3b435:fc525c9... -d corp.local dc01 -o out.json
-//   ./gpo-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5h://127.0.0.1:1080
+//   ./gpo-enum -u jsmith -p 'P@ss' -d corp.local dc01 -proxy socks5://127.0.0.1:1080
 
 package main
 
@@ -38,9 +38,10 @@ import (
 	"time"
 	"unicode/utf16"
 
-	gsmb    "github.com/mandiant/gopacket/pkg/smb"
-	gldap   "github.com/mandiant/gopacket/pkg/ldap"
+	gsmb      "github.com/mandiant/gopacket/pkg/smb"
+	gldap     "github.com/mandiant/gopacket/pkg/ldap"
 	"github.com/mandiant/gopacket/pkg/session"
+	"github.com/mandiant/gopacket/pkg/transport"
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ func parseArgs() opts {
 	flag.StringVar(&o.Hashes,       "H",             "",    "LM:NT hashes (pass-the-hash)")
 	flag.BoolVar  (&o.Kerberos,     "k",             false, "Use Kerberos (KRB5CCNAME must be set)")
 	flag.StringVar(&o.DCIP,         "dc-ip",         "",    "DC IP (if DC arg is a hostname)")
-	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5h://127.0.0.1:1080)")
+	flag.StringVar(&o.Proxy,        "proxy",         "",    "SOCKS5 proxy (e.g. socks5://127.0.0.1:1080) — hostname always resolved via proxy")
 	flag.StringVar(&o.Outfile,      "o",             "",    "Output directory (default: gpo-enum_YYYYMMDD_HHMMSS)")
 	flag.StringVar(&o.Policy,       "policy",        "",    "Enumerate only this GPO (GUID or display name, case-insensitive)")
 	flag.BoolVar  (&o.All,          "all",           false, "Show GPOs with no findings")
@@ -1361,6 +1362,24 @@ func main() {
 	stamp := time.Now().Format("20060102_150405")
 	fmt.Print(banner)
 	o := parseArgs()
+
+	// ── Proxy setup — normalize socks5:// → socks5h:// so hostname resolution
+	//    always happens inside the proxy, never leaking DNS from the operator host.
+	if o.Proxy != "" {
+		if strings.HasPrefix(strings.ToLower(o.Proxy), "socks5://") {
+			o.Proxy = "socks5h://" + o.Proxy[len("socks5://"):]
+		}
+		if err := transport.Configure(transport.Options{Proxy: o.Proxy}); err != nil {
+			fmt.Fprintf(os.Stderr, cRed+"[-]"+cReset+" Proxy config failed: %v\n", err)
+			os.Exit(1)
+		}
+		info("Proxy: %s", transport.ProxyURL())
+	} else {
+		if err := transport.Configure(transport.Options{}); err != nil {
+			fmt.Fprintf(os.Stderr, cRed+"[-]"+cReset+" Transport init failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// ── Output directory setup
 	outDir := o.Outfile
