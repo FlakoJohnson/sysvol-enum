@@ -234,12 +234,6 @@ type ldapConn struct {
 
 func connectLDAP(o opts) (*ldapConn, error) {
 	baseDN := "DC=" + strings.Join(strings.Split(o.sysvol(), "."), ",DC=")
-
-	target := session.Target{
-		Host: o.DC,
-		IP:   o.DCIP,
-		Port: 389,
-	}
 	creds := session.Credentials{
 		Domain:      o.Domain,
 		Username:    o.Username,
@@ -249,25 +243,34 @@ func connectLDAP(o opts) (*ldapConn, error) {
 		DCIP:        o.DCIP,
 	}
 
-	conn := gldap.NewClient(target, &creds)
-	if err := conn.Connect(false); err != nil {
-		return nil, fmt.Errorf("ldap connect: %w", err)
+	tryLDAP := func(port int, tls bool) (*ldapConn, error) {
+		target := session.Target{Host: o.DC, IP: o.DCIP, Port: port}
+		conn := gldap.NewClient(target, &creds)
+		if err := conn.Connect(tls); err != nil {
+			return nil, fmt.Errorf("ldap connect: %w", err)
+		}
+		var authErr error
+		if o.Kerberos {
+			authErr = conn.LoginWithKerberos()
+		} else if o.Hashes != "" {
+			authErr = conn.LoginWithHash()
+		} else {
+			authErr = conn.LoginWithUser(o.Username + "@" + o.Domain)
+		}
+		if authErr != nil {
+			conn.Close()
+			return nil, fmt.Errorf("ldap auth: %w", authErr)
+		}
+		return &ldapConn{conn: conn, baseDN: baseDN}, nil
 	}
 
-	var authErr error
-	if o.Kerberos {
-		authErr = conn.LoginWithKerberos()
-	} else if o.Hashes != "" {
-		authErr = conn.LoginWithHash()
-	} else {
-		// Use UPN format for simple bind — FQDN\user fails on some DCs
-		authErr = conn.LoginWithUser(o.Username + "@" + o.Domain)
+	// Try LDAPS (636) first; fall back to plain LDAP (389) if unavailable.
+	lc, err := tryLDAP(636, true)
+	if err != nil {
+		info("LDAPS failed — retrying on plain LDAP (389)")
+		return tryLDAP(389, false)
 	}
-	if authErr != nil {
-		conn.Close()
-		return nil, fmt.Errorf("ldap auth: %w", authErr)
-	}
-	return &ldapConn{conn: conn, baseDN: baseDN}, nil
+	return lc, nil
 }
 
 // ─────────────────────────────────────────────────────────────
